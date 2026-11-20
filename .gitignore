@@ -1,0 +1,19 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# Quarto: archivos intermedios de render
+/.quarto/
+*_files/
+*.knit.md
+*.rmarkdown
+
+# Datos descargados (si se agrega caché local; Yahoo Finance tiene términos de uso propios)
+data/
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini

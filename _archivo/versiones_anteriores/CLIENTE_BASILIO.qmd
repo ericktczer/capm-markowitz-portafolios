@@ -1,0 +1,480 @@
+---
+title: "Cliente_Basilio"
+format: pdf
+editor: visual
+---
+
+Para Basilio, debido a que buscaba contar con acción de perfil defensivo, se se determinaron las siguientes acciones y criptomonedas para su portafolio de inversión:
+
+#### Acciones
+
+Con lo que respecta a las acciones, se seleccionaron de los sectores de servicios públicos, salud, consumibles perecederos y comunicaciones.\
+1. Servicios públicos
+
+-   American Electric Power Company, Inc. (AEP)
+
+-   NextEra Energy, Inc. (NEE)
+
+-   Duke Energy Corporation (DUK)
+
+2\. Servicios de salud
+
+-   AbbVie Inc. (ABBV)
+
+-   Johnson & Johnson (JNJ)
+
+-   Pfizer Inc. (PFE)
+
+3.Consumibles perecederos
+
+-   Walmart Inc. (WMT)
+
+-   The Coca-Cola Company (KO)
+
+-   Colgate-Palmolive Company (CL)
+
+4\. Comunicaciones
+
+-   AT&T Inc. (T)
+
+-   T-Mobile US, Inc. (TMUS)
+
+-   Verizon Communications Inc. (VZ)
+
+#### Criptomonedas
+
+Para este caso utilizaremos las siguientes criptomonedas:
+
+-   Bitcoin USD (BTC-USD)
+
+-   Ethereum USD (ETH-USD)
+
+-   BNB USD (BNB-USD)
+
+#### Tasa libre de riesgo
+
+Con respecto a la tasa libre de riesgo, se toman en cuenta los bonos del estado de EEUU (Treasury Bill), que a día de hoy tiene un valor de 3.48% anual.
+
+```{r, include=FALSE ,message=FALSE, warning=FALSE}
+library(ggplot2)
+library(ggfortify)
+library(dbplyr)
+library(conflicted)
+library(tidyverse)
+library(quantmod)
+library(dplyr)
+```
+
+```{r}
+## 1. Parámetros generales ----
+
+# Activos
+tickers <- c(
+"AEP", "NEE", "DUK", "ABBV", "JNJ", "PFE", 
+"WMT", "KO", "CL", "T", "TMUS", "VZ"
+)
+
+
+# Índice de mercado (S&P 500)
+market_symbol <- "^GSPC"
+
+# Fechas de análisis
+from_date <- "2021-08-01"
+to_date   <- Sys.Date()
+
+# Tasa libre de riesgo 
+Rf_ann   <- 3.48         
+Rf_daily <- Rf_ann / 252    
+
+
+# Índice de mercado
+market_xts <- getSymbols(market_symbol, from = from_date,
+                         to = to_date, auto.assign = FALSE)
+Rm <- diff(log(Cl(market_xts))) * 100
+Rm <- na.omit(Rm)
+
+
+asset_list <- lapply(tickers, function(sym){
+  tryCatch(
+    getSymbols(sym, from = from_date, to = to_date, auto.assign = FALSE),
+    error = function(e) NULL
+  )
+})
+names(asset_list) <- tickers
+
+# Qué tickers sí se bajaron:
+asset_list_ok <- asset_list[!sapply(asset_list, is.null)]
+tickers_ok <- names(asset_list_ok)
+
+
+Ri_list <- lapply(asset_list_ok, function(x){
+  diff(log(Cl(x))) * 100
+})
+
+Ri_mat <- do.call(merge, Ri_list)
+colnames(Ri_mat) <- tickers_ok
+Ri_mat <- na.omit(Ri_mat)
+
+# Alinear con el mercado
+merge_all <- merge(Rm, Ri_mat)
+merge_all <- na.omit(merge_all)
+
+Rm    <- merge_all[,1]
+Ri_mat <- merge_all[,-1]
+
+
+# CAPM + Jensen Alpha
+capm_jensen <- function(Ri, Rm, Rf_daily){
+
+  df <- na.omit(merge(Ri, Rm))
+  colnames(df) <- c("Ri","Rm")
+
+  # Beta por regresión
+  fit <- lm(Ri ~ Rm, data = df)
+  beta_i <- coef(fit)[2]
+
+  # medias diarias del activo y mercado (%)
+  mu_i_daily <- mean(df$Ri)
+  mu_m_daily <- mean(df$Rm)
+
+  # anualizar (%)
+  mu_i_ann <- mu_i_daily * 252
+  mu_m_ann <- mu_m_daily * 252
+
+  # CAPM esperado (%)
+  E_Ri_CAPM_ann <- Rf_ann + beta_i * (mu_m_ann - Rf_ann)
+
+  # Jensen alpha (%)
+  alpha_J <- mu_i_ann - E_Ri_CAPM_ann
+
+  list(beta = beta_i,
+       mu_i_ann = mu_i_ann,
+       E_Ri_CAPM_ann = E_Ri_CAPM_ann,
+       alpha_J = alpha_J)
+}
+
+capm_results <- lapply(tickers_ok, function(sym){
+  capm_jensen(Ri_mat[, sym], Rm, Rf_daily)
+})
+names(capm_results) <- tickers_ok
+
+capm_table <- data.frame(
+  Activo      = tickers_ok,
+  Beta        = sapply(capm_results, function(x) x$beta),
+  Mu_ann_real = sapply(capm_results, function(x) x$mu_i_ann),
+  Mu_ann_CAPM = sapply(capm_results, function(x) x$E_Ri_CAPM_ann),
+  Alpha_J     = sapply(capm_results, function(x) x$alpha_J)
+)
+
+capm_table
+
+
+# Selección por Jensen α > 0
+selected <- capm_table %>% dplyr::filter(Alpha_J > 0)
+selected_tickers <- selected$Activo
+
+selected_tickers
+```
+
+\(a\) Portafolio de mínima varianza.
+
+```{r}
+#| warning: false
+# Criptomonedas
+
+crypto_tickers <- c("BTC-USD", "ETH-USD", "BNB-USD")
+
+crypto_list <- lapply(crypto_tickers, function(sym){
+  getSymbols(sym, from = from_date, to = to_date, auto.assign = FALSE)
+})
+names(crypto_list) <- crypto_tickers
+
+# Rendimientos logarítmicos diarios (%)
+Ri_crypto <- lapply(crypto_list, function(x){
+  diff(log(Cl(x))) * 100
+})
+
+Ri_crypto_mat <- do.call(merge, Ri_crypto)
+colnames(Ri_crypto_mat) <- c("BTC", "ETH", "BNB")
+Ri_crypto_mat <- na.omit(Ri_crypto_mat)
+
+
+# Matriz de rendimientos 
+Ri_sel <- Ri_mat[, selected_tickers]  
+Ri_all <- merge(Ri_sel, Ri_crypto_mat, all = FALSE)
+Ri_all <- na.omit(Ri_all)
+Datos2 <- as.data.frame(Ri_all)
+mu2 <- as.matrix(colMeans(Datos2)) 
+
+# Matriz de varianza-covarianza
+S2 <- cov(Datos2)
+
+# Vector de unos
+i2 <- matrix(1, nrow = length(mu2), ncol = 1)
+
+# Cálculos auxiliares
+Si2 <- solve(S2) %*% i2
+Su2 <- solve(S2) %*% mu2
+A2  <- as.numeric(t(i2) %*% solve(S2) %*% i2)
+B2  <- as.numeric(t(i2)  %*% solve(S2) %*% mu2)
+C2  <- as.numeric(t(mu2) %*% solve(S2) %*% mu2)
+D2  <- A2 * C2 - B2^2
+
+# Pesos del portafolio 
+w_minvar2 <- Si2 / A2
+
+# Rendimiento esperado y varianza del portafolio de mínima varianza
+mu_minvar2  <- as.numeric(t(w_minvar2) %*% mu2)
+s2_minvar2  <- as.numeric(t(w_minvar2) %*% S2 %*% w_minvar2)
+s_minvar2   <- sqrt(s2_minvar2)
+
+#Límites de la gráfica
+x <- seq(0, 4, length =100)
+y <- seq(0, 0.5, length=100)
+
+df <- expand.grid(x=x, y=y) %>%
+mutate(z=D2*x^2-A2*y^2+2*B2*y-C2)
+
+q <- ggplot(df, aes(x=x, y=y, z=z))+
+geom_contour(bins=0, lwd=1, colour ="blue4")+
+labs(x=expression(sigma[p]), y=expression(mu[p]))+
+ggtitle("Portafolios Óptimos")
+q  <- q + annotate("point",
+                  x = s_minvar2,
+                  y = mu_minvar2,
+                  size = 2,
+                  colour = "red3")+
+  
+    geom_text(
+          aes(x = s_minvar2, y = mu_minvar2, label ="Portafolio Mínima varianza"),
+          vjust = -0.4,
+          hjust = -0.2,
+          color = "red3"
+          ) 
+
+```
+
+\(b\) Portafolio tangente (P.tg).
+
+```{r}
+#Ratio de Sharpe
+R.f <- 3.48 / 252 
+E2 <- c( t(mu2 - R.f * i2) %*% solve(S2) %*% (mu2 - R.f * i2) ); 
+sharpe2 <- sqrt(E2);
+
+#Peso de cada activo
+w.tg2 <- t(solve(S2) %*% (mu2 - R.f * i2)) /
+(c(t(mu2 - R.f * i2) %*% solve(S2) %*% i2)); 
+
+#Media: Rendimiento esperado del portafolio tangente
+mu.tg2 <- w.tg2 %*% mu2; 
+
+#Riesgo: Volatilidad
+s.tg2 <- (abs(mu.tg2 - R.f)) / sharpe2; 
+
+
+q <- q + geom_point(aes(x=s.tg2, y=mu.tg2), size=2,colour="orange3")+
+geom_text(
+aes(x = s.tg2, y = mu.tg2, label ="Portafolio Tangente"),
+vjust = -0.4,
+hjust = 1.2,
+color = "orange3"
+) +
+geom_segment(
+aes(x = 0, xend = s.tg2, y = R.f, yend = mu.tg2),
+color = "black",
+linewidth = 1
+)
+```
+
+\(c\) Portafolio con retorno esperado del 15%.
+
+```{r}
+
+# 1. Retorno objetivo 15% anual -
+mu_obj_ann   <- 0.15
+mu_obj_daily <- (1 + mu_obj_ann)^(1/252) - 1   
+
+# 2. Tasas en proporción (no en %)
+Rf_daily  <- Rf_daily / 100                 
+mu_tg_dec <- as.numeric(mu.tg2) / 100  
+sig_tg_dec <- as.numeric(s.tg2) / 100  
+
+# 3. Peso en el portafolio 
+w_tg_15 <- (mu_obj_daily - Rf_daily) / (mu_tg_dec - Rf_daily)
+w_rf_15 <- 1 - w_tg_15
+
+# 4. Pesos en cada activo 
+W_esp2 <- as.numeric(w_tg_15) * as.numeric(w.tg2)
+
+# 5. Riesgo y retorno diarios en 
+mu_esp2    <- mu_obj_daily * 100         
+sigma_esp2 <- abs(w_tg_15) * s.tg2        
+
+q + annotate(
+    "point",
+    x     = sigma_esp2,
+    y     = mu_esp2,
+    size  = 2,
+    colour = "green3"
+  ) +
+  geom_text(
+    aes(x = sigma_esp2-0.05, y = mu_esp2, label = "Portafolio Retorno 15%"),
+    vjust = -3.5,
+    hjust = 0.65,
+    color = "green3"
+  )
+
+```
+
+Retornos y riesgos esperados por portafolio
+
+```{r}
+# ANUAL
+# Número de observaciones (de los rendimientos usados en S2 y mu2)
+n <- nrow(Datos2)
+
+# R.f está en % diario
+Rf_daily <- Rf_daily / 100
+
+
+# 1. PORTAFOLIO DE MÍNIMA VARIANZA
+ret_min_ann <- (1 + mu_minvar2/100) ** 252 - 1
+sig_min_ann <- (s_minvar2 / 100) * sqrt(252)
+
+retorno_min_anual <- round(ret_min_ann * 100, 2)
+riesgo_min_anual  <- round(sig_min_ann * 100, 2)
+
+ic_min_sup <- (ret_min_ann + 3.291 * (sig_min_ann / sqrt(n))) * 100
+ic_min_inf <- (ret_min_ann - 3.291 * (sig_min_ann / sqrt(n))) * 100
+
+cat(sprintf(
+  "\nPORTAFOLIO MÍNIMA VARIANZA\nRetorno anual: 
+  %.2f%%\nRiesgo anual: %.2f%%\nIC: (%.2f%%, %.2f%%)\n",
+  retorno_min_anual, riesgo_min_anual, ic_min_inf, ic_min_sup
+))
+
+
+# 2. PORTAFOLIO CON RETORNO OBJETIVO 15% (sobre la recta tangente)
+mu_15_d  <- mu_obj_daily                    
+sig_15_d <- abs(w_tg_15) * sig_tg_dec       
+
+# Anualizar
+ret_15_ann <- (1 + mu_15_d) ** 252 - 1
+sig_15_ann <- sig_15_d * sqrt(252)
+
+retorno_15_anual <- round(ret_15_ann * 100, 2)
+riesgo_15_anual  <- round(sig_15_ann * 100, 2)
+
+ic_15_sup <- (ret_15_ann + 3.291 * (sig_15_ann / sqrt(n))) * 100
+ic_15_inf <- (ret_15_ann - 3.291 * (sig_15_ann / sqrt(n))) * 100
+
+cat(sprintf(
+  "\nPORTAFOLIO RETORNO OBJETIVO 15%%\nRetorno anual: 
+  %.2f%%\nRiesgo anual: %.2f%%\nIC: (%.2f%%, %.2f%%)\n",
+  retorno_15_anual, riesgo_15_anual, ic_15_inf, ic_15_sup
+))
+
+
+# 3. PORTAFOLIO TANGENTE
+ret_tg_ann <- (1 + mu.tg2/100) ** 252 - 1
+sig_tg_ann <- (s.tg2 / 100) * sqrt(252)
+
+retorno_tg_anual <- round(ret_tg_ann * 100, 2)
+riesgo_tg_anual  <- round(sig_tg_ann * 100, 2)
+
+ic_tg_sup <- (ret_tg_ann + 3.291 * (sig_tg_ann / sqrt(n))) * 100
+ic_tg_inf <- (ret_tg_ann - 3.291 * (sig_tg_ann / sqrt(n))) * 100
+
+cat(sprintf(
+  "\nPORTAFOLIO TANGENTE\nRetorno anual: 
+  %.2f%%\nRiesgo anual: %.2f%%\nIC: (%.2f%%, %.2f%%)\n",
+  retorno_tg_anual, riesgo_tg_anual, ic_tg_inf, ic_tg_sup
+))
+
+```
+
+Asignación de Capital
+
+a\) Portafolio mínima varianza
+
+```{r}
+total <- 2000000
+
+# Asegura que sea un vector numérico con nombres
+w <- as.numeric(w_minvar2)
+names(w) <- rownames(as.matrix(w_minvar2)) %||% names(w_minvar2)
+
+montos <- total * w
+
+nombres <- c(
+  AEP  = "American Electric Power",
+  ABBV = "AbbVie",
+  WMT  = "Walmart",
+  TMUS = "T-Mobile",
+  BTC  = "Bitcoin",
+  ETH  = "Ethereum",
+  BNB  = "Binance Coin"
+)
+
+cat("Distribución del portafolio de mínima varianza:\n\n")
+
+
+
+for (tic in names(montos)) {
+  nom <- if (!is.na(nombres[tic])) nombres[tic] else tic
+  cat(sprintf(" - %s (%s): $%0.2f\n", nom, tic, montos[tic]))
+}
+
+```
+
+b\) Portafolio tangente
+
+```{r}
+# Asegura que sea un vector numérico con nombres
+w <- as.numeric(w.tg2)
+names(w) <- colnames(w.tg2)
+
+montos <- total * w
+
+cat("Distribución del portafolio tangente:\n\n")
+
+
+
+for (tic in names(montos)) {
+  nom <- if (!is.na(nombres[tic])) nombres[tic] else tic
+  cat(sprintf(" - %s (%s): $%0.2f\n", nom, tic, montos[tic]))
+}
+
+```
+
+c\) Portafolio Mixto
+
+```{r}
+#Porcentajes
+w_abs <- abs(W_esp2)
+
+acciones_abs <- sum(w_abs[1:4])
+cripto_abs   <- sum(w_abs[5:7])
+
+total_abs <- acciones_abs + cripto_abs
+
+prop_acciones <- acciones_abs / total_abs
+prop_cripto   <- cripto_abs / total_abs
+
+cat(sprintf("Porcentaje en acciones: %.2f%%\n", prop_acciones*w_tg_15 * 100))
+cat(sprintf("Porcentaje en criptomonedas: %.2f%%\n", prop_cripto* w_tg_15 * 100))
+cat(sprintf("Porcentaje en bonos del tesoro de EEUU: %.2f%%\n\n",w_rf_15*100))
+
+
+#Montos
+cat("Distribución del portafolio mixto:\n\n")
+cat(sprintf(" - Bonos del tesoro de EEUU: $%0.2f\n", total*w_rf_15))
+
+for (tic in names(montos)) {
+  nom <- if (!is.na(nombres[tic])) nombres[tic] else tic
+  cat(sprintf(" - %s (%s): $%0.2f\n", nom, tic, montos[tic]*w_tg_15 ))
+}
+
+
+```
